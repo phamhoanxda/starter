@@ -15,6 +15,7 @@ const tours = JSON.parse(
 
 const importData = async () => {
   try {
+    console.log('Tour Length: ' + tours.length);
     await Tour.create(tours);
     console.log('IMPORTED SUCCESSED!!!');
   } catch (err) {

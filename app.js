@@ -1,8 +1,12 @@
 const express = require('express');
 const morgan = require('morgan');
+
 const bodyParser = require('body-parser');
 const tourRouter = require('./routers/tourRouter');
 const userRouter = require('./routers/userRouter');
+const globalErrorHandeler = require('./controller/errorController');
+
+const AppError = require('./utils/appError');
 
 const app = express();
 
@@ -44,5 +48,14 @@ app.use(express.static('./public')); // if someone type static soure.html this w
 
 app.use('/api/hoan/tours', tourRouter);
 app.use('/api/hoan/users', userRouter);
+
+app.all('*', (req, res, next) => {
+  // const err = new Error('Can not find this page!!!');
+  // err.statusCode = 404;
+  // err.status = 'fail';
+  next(new AppError('Can not find this page!!!', 404));
+});
+
+app.use(globalErrorHandeler);
 
 module.exports = app;

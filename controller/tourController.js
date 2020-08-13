@@ -1,6 +1,4 @@
-const fs = require('fs');
-const Tour = require('./../model/tourmodel');
-const { match } = require('assert');
+const Tour = require('../model/tourmodel');
 
 // #region ForLocalDataBase
 //**********GET DATA FROM JSON************
@@ -82,6 +80,96 @@ const { match } = require('assert');
 //};
 
 //#endregion
+class APIFeatures {
+  constructor(query, queryString) {
+    this.query = query;
+    this.queryString = queryString;
+  }
+
+  filter() {
+    //BUID QUERY
+    const queryObj = { ...this.queryString }; // clone new object
+    const excludedFields = ['page', 'sort', 'limit', 'field'];
+    excludedFields.forEach((el) => delete queryObj[el]);
+    //ADVANCED QUERY
+    // A1) FILLTERING
+    // MongoDb structure { duration :{$gte: 5}, difficulty: 'easy'}
+    // Mongoose structure { duration :{gte: 5}, difficulty: 'easy'}
+    // So we need to conver them
+    if (queryObj) {
+      let queryStr = JSON.stringify(queryObj);
+      queryStr = queryStr.replace(
+        /\b(gt|gte|lt|lte)\b/g,
+        (match) => `$${match}`
+      );
+      this.query = this.query.find(JSON.parse(queryStr));
+    }
+    return this;
+  }
+
+  sort() {
+    // 1B) SORTING BY PARAM
+    if (this.queryString.sort) {
+      const sortBy = this.queryString.sort.split(',').join(' ');
+      this.query = this.query.sort(sortBy);
+    } else {
+      this.query = this.query.sort('createdAt');
+    }
+    return this;
+  }
+
+  limitfields() {
+    //FIELD LIMITING
+    if (this.queryString.fields) {
+      const fields = this.queryString.fields.split(',').join(' ');
+      this.query = this.query.select(fields);
+    } else {
+      this.query = this.query.select('-__v');
+    }
+    return this;
+  }
+
+  pagination() {
+    const page = this.queryString.page * 1 || 1;
+    const limit = this.queryString.limit * 1 || 100;
+    const skip = (page - 1) * limit;
+    //console.log(page, limit, skip);
+
+    this.query = this.query.skip(skip).limit(limit);
+    // if (this.query.page) {
+    //   const numtours = await Tour.countDocuments();
+    //   if (skip >= numtours) {
+    //     throw new Error('the page was not exit!!');
+    //   }
+    // }
+    return this;
+  }
+}
+
+const getalldata = async (req, res) => {
+  try {
+    // EXCUTE QUERY
+    const features = new APIFeatures(Tour.find(), req.query)
+      .filter()
+      .sort()
+      .limitfields()
+      .pagination();
+    const tours = await features.query;
+
+    res.status(200).json({
+      status: 'success',
+      resullts: tours.length,
+      data: {
+        tour: tours,
+      },
+    });
+  } catch (err) {
+    res.status(400).json({
+      status: 'fail',
+      message: err,
+    });
+  }
+};
 
 const deletedata = async (req, res) => {
   try {
@@ -99,66 +187,15 @@ const deletedata = async (req, res) => {
     });
   }
 };
-const getalldata = async (req, res) => {
-  try {
-    // const tours = await Tour.find()
-    // .where('duration')
-    // .equals(5)
 
-    //BUID QUERY
-    const queryObj = { ...req.query }; // clone new object
-    const excludedFields = ['page', 'sort', 'limit', 'field'];
-    excludedFields.forEach((el) => delete queryObj[el]);
-    //ADVANCED QUERY
-    // A1) FILLTERING
-    // MongoDb structure { duration :{$gte: 5}, difficulty: 'easy'}
-    // Mongoose structure { duration :{gte: 5}, difficulty: 'easy'}
-    // So we need to conver them
-    let queryStr = JSON.stringify(queryObj);
-    queryStr = queryStr.replace(/\b(gt|gte|lt|lte)\b/g, (match) => `$${match}`);
-    //console.log(JSON.parse(queryStr));
-
-    // 1B) SORTING BY PARAM
-    let query = Tour.find(JSON.parse(queryStr));
-    if (req.query.sort) {
-      const sortBy = req.query.sort.split(',').join(' ');
-      query = query.sort(sortBy);
-    } else {
-      query = query.sort('createdAt');
-    }
-
-    //FIELD LIMITING
-    if (req.query.fields) {
-      const fields = req.query.fields.split(',').join(' ');
-      query = query.select(fields);
-    } else {
-      query = query.select('-__v');
-    }
-
-    // PAGINATION
-    const page = req.query.page * 1 || 1;
-    const limit = req.query.limit * 1 || 100;
-    const skip = (page - 1) * limit;
-    console.log(page, limit, skip);
-
-    query = query.skip(skip).limit(limit);
-
-    // EXCUTE QUERY
-    const tours = await query;
-    res.status(200).json({
-      status: 'success',
-      resullts: tours.length,
-      data: {
-        tour: tours,
-      },
-    });
-  } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err,
-    });
-  }
+//ALIASING DATA
+const aliasdata = (req, res, next) => {
+  req.query.limit = 5;
+  req.query.sort = '-ratingsAverage,price';
+  //req.query.fields = 'name,price,ratingsAverage,sumary,difficulty';
+  next();
 };
+
 const createdata = async (req, res) => {
   // const newtour = new Tour({  })
   // newtour.save()
@@ -213,10 +250,92 @@ const patchdata = async (req, res) => {
   }
 };
 
+const getMonthyPlan = async (req, res) => {
+  try {
+    const year = req.params.year * 1;
+    const tours = await Tour.aggregate([
+      {
+        $unwind: '$startDates',
+      },
+      {
+        $match: {
+          startDates: {
+            $gte: new Date(`${year}-01-01`),
+            $lte: new Date(`${year}-12-31`),
+          },
+        },
+      },
+      {
+        $group: {
+          _id: { $month: '$startDates' },
+          numtourStart: { $sum: 1 },
+          tours: { $push: '$name' },
+        },
+      },
+      {
+        $addFields: { month: '$_id' },
+      },
+      { $project: { _id: 0 } },
+      {
+        $sort: { numtourStart: -1 },
+      },
+      { $limit: 5 },
+    ]);
+
+    res.status(400).json({
+      status: 'success',
+      result: tours.length,
+      data: {
+        tour: tours,
+      },
+    });
+  } catch (err) {
+    res.status(404).json({
+      status: 'fail',
+      message: err,
+    });
+  }
+};
+const getTourStats = async (req, res) => {
+  try {
+    const stats = await Tour.aggregate([
+      {
+        $match: { ratingsAverage: { $gte: 4.5 } },
+      },
+      {
+        $group: {
+          _id: { $toUpper: '$difficulty' },
+          numTour: { $sum: 1 },
+          totalRating: { $sum: '$ratingsQuantity' },
+          avgRating: { $avg: '$ratingsAverage' },
+          avgPrice: { $avg: '$price' },
+          maxPrice: { $max: '$price' },
+          minPrice: { $min: '$price' },
+        },
+      },
+    ]);
+
+    res.status(400).json({
+      status: 'success',
+      data: {
+        tour: stats,
+      },
+    });
+  } catch (err) {
+    res.status(404).json({
+      status: 'fail',
+      message: err,
+    });
+  }
+};
+
 module.exports = {
   deletedata: deletedata,
   getalldata: getalldata,
   createdata: createdata,
   getdata: getdata,
   patchdata: patchdata,
+  aliasdata: aliasdata,
+  getTourStats: getTourStats,
+  getMonthyPlan: getMonthyPlan,
 };

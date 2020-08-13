@@ -3,7 +3,6 @@ const morgan = require('morgan');
 const bodyParser = require('body-parser');
 const tourRouter = require('./routers/tourRouter');
 const userRouter = require('./routers/userRouter');
-const tourController = require('./controller/tourController');
 
 const app = express();
 
